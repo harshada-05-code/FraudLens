@@ -1,10 +1,11 @@
 import os
 import random
+import re
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from models import SessionLocal, Transaction, Vendor, Employee, PolicyRule
 from mcp_server import get_dashboard_summary
 from agents import audit_transaction
