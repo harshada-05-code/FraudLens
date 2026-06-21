@@ -978,13 +978,13 @@ function PolicyRow({ policy, onSave, isDarkMode }) {
     </div>
   );
 }
-
 // Sub-component: Collusion Network Graph (SVG force-directed layout)
 function CollusionGraph() {
   const [graph, setGraph] = useState({ nodes: [], edges: [] });
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [draggedNode, setDraggedNode] = useState(null);
+  const [dimensions, setDimensions] = useState({ width: 800, height: 500 });
   const containerRef = useRef(null);
 
   useEffect(() => {
@@ -994,16 +994,17 @@ function CollusionGraph() {
         setGraph(data);
         
         // Initialize node positions (circle layout as starting point)
-        const width = 700;
-        const height = 500;
+        const w = containerRef.current ? containerRef.current.getBoundingClientRect().width : 800;
+        const h = 500;
+        setDimensions({ width: w, height: h });
         const radius = 180;
         
         const initializedNodes = data.nodes.map((node, idx) => {
           const angle = (idx / data.nodes.length) * 2 * Math.PI;
           return {
             ...node,
-            x: width / 2 + radius * Math.cos(angle) + (Math.random() - 0.5) * 20,
-            y: height / 2 + radius * Math.sin(angle) + (Math.random() - 0.5) * 20,
+            x: w / 2 + radius * Math.cos(angle) + (Math.random() - 0.5) * 20,
+            y: h / 2 + radius * Math.sin(angle) + (Math.random() - 0.5) * 20,
             vx: 0,
             vy: 0
           };
@@ -1020,8 +1021,7 @@ function CollusionGraph() {
     if (nodes.length === 0) return;
     
     let animationFrame;
-    const width = 700;
-    const height = 500;
+    const { width, height } = dimensions;
     const center = { x: width / 2, y: height / 2 };
     
     const runSimulation = () => {
