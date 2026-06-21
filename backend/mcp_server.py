@@ -43,7 +43,18 @@ def check_duplicate_receipt(amount: float, vendor_name: str, date_str: str, empl
     """
     db = SessionLocal()
     try:
-        tx_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        if hasattr(date_str, "strftime"):
+            # It is a date/datetime object
+            tx_date = date_str
+            if hasattr(tx_date, "date"):
+                tx_date = tx_date.date()
+        elif isinstance(date_str, str):
+            # Clean string to get only YYYY-MM-DD (removes time/timezone info if present)
+            clean_date_str = date_str.split("T")[0].split(" ")[0]
+            tx_date = datetime.strptime(clean_date_str, "%Y-%m-%d").date()
+        else:
+            tx_date = datetime.now().date()
+            
         start_date = tx_date - timedelta(days=7)
         end_date = tx_date + timedelta(days=7)
 
