@@ -130,11 +130,11 @@ def run_fallback_audit(tx: Transaction, db: Session) -> dict:
         max_amount = policy["max_amount"]
         threshold = policy["approval_threshold"]
         if amount > max_amount:
-            compliance_flags.append(f"Exceeds maximum allowable category limit of {max_amount} INR.")
-            compliance_msg = "Policy violation: Transaction exceeds maximum category limit."
+            compliance_flags.append(f"Exceeds {category} limit ({amount} > {max_amount} INR)")
+            compliance_msg = f"Limit Exceeded: amount exceeds category budget of {max_amount} INR."
         elif amount > threshold:
-            compliance_flags.append(f"Exceeds approval threshold of {threshold} INR. Second-level approval required.")
-            compliance_msg = "Requires management sign-off: Amount exceeds automated threshold."
+            compliance_flags.append(f"Above review threshold ({amount} > {threshold} INR)")
+            compliance_msg = f"Needs Approval: amount exceeds review threshold of {threshold} INR."
     
     compliance_result = {
         "status": "success" if not compliance_flags else "flagged",
