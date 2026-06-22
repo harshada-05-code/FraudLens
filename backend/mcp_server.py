@@ -48,10 +48,13 @@ def check_duplicate_receipt(amount: float, vendor_name: str, date_str: str, empl
             tx_date = date_str
             if hasattr(tx_date, "date"):
                 tx_date = tx_date.date()
-        elif isinstance(date_str, str):
+        elif isinstance(date_str, str) and date_str.strip() not in ("", "undefined", "null"):
             # Clean string to get only YYYY-MM-DD (removes time/timezone info if present)
             clean_date_str = date_str.split("T")[0].split(" ")[0]
-            tx_date = datetime.strptime(clean_date_str, "%Y-%m-%d").date()
+            try:
+                tx_date = datetime.strptime(clean_date_str, "%Y-%m-%d").date()
+            except ValueError:
+                tx_date = datetime.now().date()
         else:
             tx_date = datetime.now().date()
             

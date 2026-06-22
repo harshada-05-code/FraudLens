@@ -116,10 +116,13 @@ async def upload_transaction(
     file: UploadFile = File(None),
     db: Session = Depends(get_db)
 ):
-    try:
-        tx_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    if not date_str or date_str.strip() in ("", "undefined", "null"):
+        tx_date = datetime.now().date()
+    else:
+        try:
+            tx_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            tx_date = datetime.now().date()
 
     # Find or create Vendor
     vendor = db.query(Vendor).filter(Vendor.name == vendor_name).first()
