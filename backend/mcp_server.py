@@ -212,13 +212,16 @@ def flag_transaction(transaction_id: int, verdict: str, reasoning: str) -> dict:
         if not tx:
             return {"status": "error", "message": "Transaction not found"}
 
-        tx.verdict = verdict
         if verdict == "Auto-Approved" or verdict == "Approved":
+            if tx.vendor.status == "Invalid":
+                return {"status": "error", "message": "Cannot approve transaction: Vendor has an invalid GSTIN."}
             tx.status = "Approved"
         elif verdict == "Flagged for Review":
             tx.status = "Flagged"
         else:
             tx.status = "Flagged"  # Rejected is still flagged in the queue
+
+        tx.verdict = verdict
 
         # Append final summary to reasoning trail
         trail = tx.reasoning_trail or {}

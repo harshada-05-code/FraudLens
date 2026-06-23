@@ -50,6 +50,14 @@ const translate = (text, lang) => {
     "Approved": "स्वीकृत",
     "Flagged": "चिह्नित",
     "Auditing...": "ऑडिट चल रहा है...",
+    "Auditor Decisions": "लेखा परीक्षक के निर्णय",
+    "Approve": "स्वीकृत करें",
+    "Reject": "अस्वीकार करें",
+    "Failed to approve transaction.": "लेनदेन को स्वीकृत करने में विफल।",
+    "Transaction Approved successfully.": "लेनदेन सफलतापूर्वक स्वीकृत किया गया।",
+    "Transaction Rejected successfully.": "लेनदेन सफलतापूर्वक अस्वीकृत किया गया।",
+    "An error occurred during approval.": "अनुमोदन के दौरान एक त्रुटि हुई।",
+    "An error occurred during rejection.": "अस्वीकृति के दौरान एक त्रुटि हुई।",
     
     // Dashboard Stats
     "Total Audited Spend": "कुल ऑडिटेड खर्च",
@@ -1003,6 +1011,75 @@ export default function App() {
                       )}
                     </div>
 
+                    {/* Manual Auditor Actions */}
+                    {selectedTx.status === "Pending" || selectedTx.status === "Flagged" ? (
+                      <div className="pt-4 border-t dark:border-slate-800 border-slate-200 space-y-3">
+                        <h4 className="font-bold text-xs uppercase tracking-wider dark:text-slate-400 text-slate-500">{translate("Auditor Decisions", language)}</h4>
+                        <div className="flex gap-3">
+                          <button
+                            onClick={async () => {
+                              try {
+                                const formData = new FormData();
+                                formData.append("verdict", "Approved");
+                                formData.append("reasoning", "Manually approved by auditor.");
+                                const res = await fetch(`${API_URL}/transactions/${selectedTx.id}/verdict`, {
+                                  method: "POST",
+                                  body: formData
+                                });
+                                const data = await res.json();
+                                if (!res.ok) {
+                                  alert(data.detail || translate("Failed to approve transaction.", language));
+                                } else {
+                                  alert(translate("Transaction Approved successfully.", language));
+                                  // Refresh details & queue
+                                  fetchData();
+                                  fetch(`${API_URL}/transactions/${selectedTx.id}`)
+                                    .then(r => r.json())
+                                    .then(d => setSelectedTx(d));
+                                }
+                              } catch (err) {
+                                console.error(err);
+                                alert(translate("An error occurred during approval.", language));
+                              }
+                            }}
+                            className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm transition text-center"
+                          >
+                            ✓ {translate("Approve", language)}
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                const formData = new FormData();
+                                formData.append("verdict", "Rejected");
+                                formData.append("reasoning", "Manually rejected by auditor.");
+                                const res = await fetch(`${API_URL}/transactions/${selectedTx.id}/verdict`, {
+                                  method: "POST",
+                                  body: formData
+                                });
+                                const data = await res.json();
+                                if (!res.ok) {
+                                  alert(data.detail || translate("Failed to reject transaction.", language));
+                                } else {
+                                  alert(translate("Transaction Rejected successfully.", language));
+                                  // Refresh details & queue
+                                  fetchData();
+                                  fetch(`${API_URL}/transactions/${selectedTx.id}`)
+                                    .then(r => r.json())
+                                    .then(d => setSelectedTx(d));
+                                }
+                              } catch (err) {
+                                console.error(err);
+                                alert(translate("An error occurred during rejection.", language));
+                              }
+                            }}
+                            className="flex-1 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold shadow-sm transition text-center"
+                          >
+                            ✗ {translate("Reject", language)}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
                   </div>
                 ) : (
                   <div className={`p-6 rounded-xl border flex flex-col items-center justify-center text-center h-[calc(100vh-12rem)] ${isDarkMode ? "bg-[#0F172A] border-slate-800" : "bg-white border-slate-200"}`}>
@@ -1016,7 +1093,16 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === "graph" && <CollusionGraph language={language} isDarkMode={isDarkMode} />}
+          {activeTab === "graph" && (
+            <CollusionGraph 
+              language={language} 
+              isDarkMode={isDarkMode} 
+              setActiveTab={setActiveTab}
+              setStatusFilter={setStatusFilter}
+              setSearchQuery={setSearchQuery}
+              setLanguage={setLanguage}
+            />
+          )}
 
           {activeTab === "whatsapp" && (
             <div className="max-w-md mx-auto">
@@ -1295,13 +1381,22 @@ function PolicyRow({ policy, onSave, isDarkMode, language }) {
   );
 }
 // Sub-component: Collusion Network Graph (SVG force-directed layout)
-function CollusionGraph({ language, isDarkMode }) {
+function CollusionGraph({ language, isDarkMode, setActiveTab, setStatusFilter, setSearchQuery, setLanguage }) {
+  const [viewMode, setViewMode] = useState("cards"); // "cards" or "graph"
+  const [expandedCardId, setExpandedCardId] = useState(null);
+  const [viewRole, setViewRole] = useState("smb"); // "smb" or "judge"
+  const [reviewedPairs, setReviewedPairs] = useState([]);
+  
   const [graph, setGraph] = useState({ nodes: [], edges: [] });
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [draggedNode, setDraggedNode] = useState(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 500 });
   const containerRef = useRef(null);
+
+  const markReviewed = (pairId) => {
+    setReviewedPairs(prev => [...prev, pairId]);
+  };
 
   useEffect(() => {
     fetch(`${API_URL}/network/graph`)
@@ -1342,7 +1437,6 @@ function CollusionGraph({ language, isDarkMode }) {
     
     const runSimulation = () => {
       setNodes(prevNodes => {
-        // Create a copy of nodes to update
         const updatedNodes = prevNodes.map(n => ({ ...n }));
         
         // Repulsion force between all nodes (charge)
@@ -1383,7 +1477,7 @@ function CollusionGraph({ language, isDarkMode }) {
             const dist = Math.sqrt(dx * dx + dy * dy) || 1;
             
             const targetDist = 120;
-            const k = 0.05; // spring constant
+            const k = 0.05;
             const force = (dist - targetDist) * k;
             
             const fx = (dx / dist) * force;
@@ -1409,13 +1503,11 @@ function CollusionGraph({ language, isDarkMode }) {
           node.vx += dx * 0.01;
           node.vy += dy * 0.01;
           
-          // Apply velocity and damping
           node.x += node.vx;
           node.y += node.vy;
-          node.vx *= 0.7; // friction
+          node.vx *= 0.7;
           node.vy *= 0.7;
           
-          // Boundary collision
           node.x = Math.max(30, Math.min(width - 30, node.x));
           node.y = Math.max(30, Math.min(height - 30, node.y));
         });
@@ -1430,7 +1522,6 @@ function CollusionGraph({ language, isDarkMode }) {
     return () => cancelAnimationFrame(animationFrame);
   }, [edges, draggedNode, nodes.length]);
 
-  // Handle Dragging
   const handleMouseDown = (e, nodeId) => {
     setDraggedNode(nodeId);
   };
@@ -1460,128 +1551,514 @@ function CollusionGraph({ language, isDarkMode }) {
     setDraggedNode(null);
   };
 
+  const formatINR = (val) => {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency: "INR",
+      maximumFractionDigits: 0
+    }).format(val);
+  };
+
+  const riskPairs = [
+    {
+      id: "pair_1",
+      employee: "Kabir Rao",
+      department: "Operations",
+      vendor: "Apex Consulting Services",
+      gstin: "27UNVERIFIED123",
+      gstinStatus: "Unverified",
+      totalSpend: 580000,
+      riskLevel: "High",
+      whatToDo: "Kabir Rao represents 95% of transactions for this vendor, and the vendor has an unverified GSTIN. We recommend: 1) Pause all payments to Apex Consulting Services immediately. 2) Ask Kabir Rao to provide independent proof-of-work (signed deliverables/reports). 3) Run a vendor verification check on the GST Portal.",
+      monthlySpend: [
+        { month: "April", amount: 180000, limit: 100005 },
+        { month: "May", amount: 220000, limit: 100005 },
+        { month: "June", amount: 180000, limit: 100005 }
+      ],
+      reasoningTrail: {
+        compliance: {
+          status: "VIOLATION",
+          message: "Limit Exceeded: amount exceeds category budget of 100000 INR."
+        },
+        fraud: {
+          status: "SUSPICIOUS",
+          duplicateRisk: "Low",
+          collusionRisk: "High",
+          flags: ["suspicious collusion pattern: employee represents > 75% of vendor transactions"]
+        },
+        vendor: {
+          status: "UNVERIFIED",
+          message: "GSTIN matches format but status is unverified."
+        },
+        orchestrator: {
+          status: "Flagged for Review",
+          reasoning: "Transaction flagged for audit: suspicious collusion pattern, unverified vendor GSTIN."
+        }
+      }
+    },
+    {
+      id: "pair_2",
+      employee: "Arjun Gupta",
+      department: "Marketing",
+      vendor: "Garg Stationery & Xerox",
+      gstin: "27INVALID999Z",
+      gstinStatus: "Invalid",
+      totalSpend: 250000,
+      riskLevel: "High",
+      whatToDo: "The vendor's GSTIN status is INVALID. System flagged a collusion risk pattern (repeated round-number stationery invoices). We recommend: 1) Hold invoice approval. 2) Ask Arjun Gupta for the physical stationery delivery challans. 3) Block the vendor in the ERP until a valid GST certificate is submitted.",
+      monthlySpend: [
+        { month: "April", amount: 90000, limit: 50005 },
+        { month: "May", amount: 110000, limit: 50005 },
+        { month: "June", amount: 50000, limit: 50005 }
+      ],
+      reasoningTrail: {
+        compliance: {
+          status: "VIOLATION",
+          message: "Limit Exceeded: amount exceeds category budget of 50000 INR."
+        },
+        fraud: {
+          status: "SUSPICIOUS",
+          duplicateRisk: "Low",
+          collusionRisk: "High",
+          flags: ["suspicious collusion pattern: repeated round-number invoices"]
+        },
+        vendor: {
+          status: "INVALID",
+          message: "vendor GSTIN is invalid/unregistered."
+        },
+        orchestrator: {
+          status: "Rejected",
+          reasoning: "Transaction rejected due to: vendor GSTIN is invalid/unregistered."
+        }
+      }
+    },
+    {
+      id: "pair_3",
+      employee: "Diya Sharma",
+      department: "Sales",
+      vendor: "Shree Balaji Printers",
+      gstin: "27UNVERIFIED789",
+      gstinStatus: "Unverified",
+      totalSpend: 120000,
+      riskLevel: "Medium",
+      whatToDo: "Elevated repeat transaction frequency between employee and vendor. We recommend: 1) Audit the last 3 print jobs for market rate parity. 2) Verify why Shree Balaji Printers is chosen over other registered vendors.",
+      monthlySpend: [
+        { month: "April", amount: 40000, limit: 50005 },
+        { month: "May", amount: 45000, limit: 50005 },
+        { month: "June", amount: 35000, limit: 50005 }
+      ],
+      reasoningTrail: {
+        compliance: {
+          status: "PASSED",
+          message: "Transaction is within budget limits."
+        },
+        fraud: {
+          status: "SUSPICIOUS",
+          duplicateRisk: "Low",
+          collusionRisk: "Medium",
+          flags: ["Elevated repeat transaction frequency between employee and vendor."]
+        },
+        vendor: {
+          status: "UNVERIFIED",
+          message: "GSTIN matches format but status is unverified."
+        },
+        orchestrator: {
+          status: "Flagged for Review",
+          reasoning: "Transaction flagged for audit: unverified vendor GSTIN."
+        }
+      }
+    }
+  ];
+
   return (
     <div className="space-y-6">
       
-      {/* Legend & Explanation */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
-        <div className="p-4 rounded-xl border dark:bg-slate-900/40 bg-slate-50 dark:border-slate-800 border-slate-200/80 space-y-2">
-          <p className="font-semibold text-teal-600 dark:text-teal-400">{translate("Node Legend", language)}</p>
-          <div className="flex gap-4 items-center mt-1">
-            <span className="flex items-center gap-1.5 dark:text-slate-300 text-slate-700">
-              <span className="w-3.5 h-3.5 rounded-full bg-teal-600 inline-block"></span>
-              {translate("Employee", language)}
-            </span>
-            <span className="flex items-center gap-1.5 dark:text-slate-300 text-slate-700">
-              <span className="w-3.5 h-3.5 rounded-full bg-indigo-600 inline-block"></span>
-              {translate("Verified Vendor", language)}
-            </span>
-            <span className="flex items-center gap-1.5 dark:text-slate-300 text-slate-700">
-              <span className="w-3.5 h-3.5 rounded-full bg-rose-600 inline-block"></span>
-              {translate("Invalid/Suspicious Vendor", language)}
-            </span>
-          </div>
+      {/* View Selector & Header */}
+      <div className="flex justify-between items-center flex-wrap gap-4">
+        <div>
+          <h3 className="text-lg font-bold">{translate("Collusion & Repeat-Billing Risk Analysis", language)}</h3>
+          <p className="text-xs dark:text-slate-400 text-slate-500">{translate("AI Agent analysis showing suspicious employee↔vendor relationships and repeat cluster billing.", language)}</p>
         </div>
-
-        <div className="p-4 rounded-xl border dark:bg-slate-900/40 bg-slate-50 dark:border-slate-800 border-slate-200/80 space-y-2">
-          <p className="font-semibold text-amber-600 dark:text-amber-500">{translate("Connection Types", language)}</p>
-          <div className="flex gap-4 items-center mt-1 text-slate-700 dark:text-slate-350">
-            <span className="flex items-center gap-1.5">
-              <span className="h-0.5 w-6 bg-slate-400 dark:bg-slate-600 inline-block"></span>
-              {translate("Standard Expense", language)}
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-1 w-6 bg-rose-500 inline-block"></span>
-              {translate("High Collusion Risk (Thick/Red)", language)}
-            </span>
-          </div>
-        </div>
-
-        <div className="p-4 rounded-xl border dark:bg-slate-900/40 bg-slate-50 dark:border-slate-800 border-slate-200/80 flex items-center justify-between">
-          <div>
-            <p className="font-semibold dark:text-slate-300 text-slate-700">{translate("Interactive Controls", language)}</p>
-            <p className="text-[11px] dark:text-slate-400 text-slate-500 mt-1">{translate("Drag nodes to rearrange or pull nodes apart to visually inspect transaction paths.", language)}</p>
-          </div>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => setViewMode("cards")}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${viewMode === "cards" ? "bg-teal-600 text-white" : "dark:bg-slate-800/30 bg-slate-100 dark:text-slate-400 text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-800/60 border dark:border-slate-800 border-slate-200/50 shadow-xs"}`}
+          >
+            📋 {translate("Risk Cards", language)}
+          </button>
+          <button 
+            onClick={() => setViewMode("graph")}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${viewMode === "graph" ? "bg-teal-600 text-white" : "dark:bg-slate-800/30 bg-slate-100 dark:text-slate-400 text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-800/60 border dark:border-slate-800 border-slate-200/50 shadow-xs"}`}
+          >
+            🕸️ {translate("Network Graph", language)}
+          </button>
         </div>
       </div>
 
-      {/* SVG Canvas */}
-      <div 
-        ref={containerRef}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        className="w-full h-[500px] border dark:border-slate-800 border-slate-200 rounded-xl relative overflow-hidden dark:bg-[#070A11] bg-slate-50 cursor-grab active:cursor-grabbing"
-      >
-        <svg className="w-full h-full">
-          {/* Draw Connection Edges */}
-          {edges.map((edge, idx) => {
-            const source = nodes.find(n => n.id === edge.from);
-            const target = nodes.find(n => n.id === edge.to);
-            if (!source || !target) return null;
-            
-            return (
-              <g key={`edge-${idx}`}>
-                <line 
-                  x1={source.x} 
-                  y1={source.y} 
-                  x2={target.x} 
-                  y2={target.y} 
-                  stroke={edge.suspicious ? "#F43F5E" : (isDarkMode ? "#475569" : "#94A3B8")} 
-                  strokeWidth={edge.suspicious ? 3 : Math.min(1 + edge.tx_count * 0.5, 4)} 
-                  opacity={edge.suspicious ? 0.9 : 0.4}
-                />
-                {/* Weight badge in center of line */}
-                {edge.tx_count > 2 && (
-                  <g transform={`translate(${(source.x + target.x) / 2}, ${(source.y + target.y) / 2})`}>
-                    <rect x="-12" y="-8" width="24" height="15" rx="3" fill={isDarkMode ? "#0B0F19" : "#FFFFFF"} stroke={isDarkMode ? "#334155" : "#CBD5E1"} strokeWidth="1" />
-                    <text textAnchor="middle" y="3" fontSize="9px" className="dark:fill-slate-400 fill-slate-650 font-semibold">{edge.tx_count}</text>
-                  </g>
-                )}
-              </g>
-            );
-          })}
+      {/* Summary KPIs */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className={`p-5 rounded-xl border relative overflow-hidden transition hover:scale-[1.01] ${isDarkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"}`}>
+          <p className="text-[10px] dark:text-slate-400 text-slate-500 uppercase tracking-widest font-semibold">{translate("Collusion Alerts", language)}</p>
+          <h3 className="text-xl font-bold mt-2 text-rose-500">{language === "HI" ? "3 चिह्नित जोड़ियाँ" : "3 Flagged Pairs"}</h3>
+          <p className="text-[10px] dark:text-slate-500 text-slate-400 mt-1">{translate("Tight repeated invoice submit patterns", language)}</p>
+        </div>
 
-          {/* Draw Nodes */}
-          {nodes.map(node => {
-            const isVendor = node.type === "vendor";
-            let color = "fill-teal-600";
-            if (isVendor) {
-              color = node.gstin_status === "Invalid" ? "fill-rose-600" : "fill-indigo-600";
-            }
-            
-            return (
-              <g 
-                key={node.id} 
-                transform={`translate(${node.x}, ${node.y})`}
-                onMouseDown={(e) => handleMouseDown(e, node.id)}
-                className="select-none"
+        <div className={`p-5 rounded-xl border relative overflow-hidden transition hover:scale-[1.01] ${isDarkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"}`}>
+          <p className="text-[10px] dark:text-slate-400 text-slate-500 uppercase tracking-widest font-semibold">{translate("Total Capital At Risk", language)}</p>
+          <h3 className="text-xl font-bold mt-2 text-amber-500">{language === "HI" ? "₹9.5 लाख जोखिम में" : "₹9.5L At Risk"}</h3>
+          <p className="text-[10px] dark:text-slate-500 text-slate-400 mt-1">{translate("Unverified or invalid vendor transactions", language)}</p>
+        </div>
+
+        <div className={`p-5 rounded-xl border relative overflow-hidden transition hover:scale-[1.01] ${isDarkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"}`}>
+          <p className="text-[10px] dark:text-slate-400 text-slate-500 uppercase tracking-widest font-semibold">{translate("Auditor Status", language)}</p>
+          <h3 className="text-xl font-bold mt-2 text-rose-500">{translate("Review Required", language)}</h3>
+          <p className="text-[10px] dark:text-slate-500 text-slate-400 mt-1">{translate("Escalated to Compliance Board", language)}</p>
+        </div>
+      </div>
+
+      {viewMode === "cards" ? (
+        /* Collapsed Risk Cards List */
+        <div className="space-y-4">
+          {riskPairs.map(pair => (
+            <div 
+              key={pair.id}
+              className={`border-y border-r rounded-r-xl border-l-4 transition-all ${
+                isDarkMode ? "border-slate-800" : "border-slate-200"
+              } ${
+                pair.riskLevel === "High" ? "border-l-rose-500" : "border-l-amber-500"
+              } ${
+                expandedCardId === pair.id 
+                  ? (isDarkMode ? "bg-slate-900/90" : "bg-slate-50/80") 
+                  : (isDarkMode ? "bg-slate-900/40 hover:bg-slate-800/20" : "bg-white hover:bg-slate-50")
+              }`}
+            >
+              {/* Header (Clickable for Expand) */}
+              <div 
+                onClick={() => setExpandedCardId(expandedCardId === pair.id ? null : pair.id)}
+                className="p-4 flex items-center justify-between flex-wrap gap-4 cursor-pointer select-none"
               >
-                {/* Collusion Danger Pulse Ring */}
-                {(node.label === "Apex Consulting Services" || node.label === "Garg Stationery & Xerox" || node.label === "Kabir Rao" || node.label === "Arjun Gupta") && (
-                  <circle r="22" className="fill-none stroke-rose-500 opacity-60 animate-ping" strokeWidth="1" />
-                )}
+                <div className="flex items-center gap-4">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs ${
+                    pair.riskLevel === "High" ? "bg-rose-500/10 text-rose-500" : "bg-amber-500/10 text-amber-500"
+                  }`}>
+                    {pair.employee.split(" ").map(n => n[0]).join("")}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-sm">{pair.employee}</span>
+                      <span className="text-[10px] dark:text-slate-400 text-slate-550">({translate(pair.department, language)})</span>
+                      <span className="text-slate-400 text-xs">↔</span>
+                      <span className="font-semibold text-sm">{pair.vendor}</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs dark:text-slate-400 text-slate-500 mt-1">
+                      <span>GSTIN: <span className="font-mono text-[11px]">{pair.gstin}</span></span>
+                      <span>•</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                        pair.gstinStatus === "Verified" 
+                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-500" 
+                          : pair.gstinStatus === "Unverified" 
+                            ? "bg-amber-500/10 text-amber-600 dark:text-amber-400" 
+                            : "bg-rose-500/10 text-rose-600 dark:text-rose-450"
+                      }`}>{translate(pair.gstinStatus, language)}</span>
+                    </div>
+                  </div>
+                </div>
 
-                <circle 
-                  r={isVendor ? 12 : 10} 
-                  className={`${color} dark:stroke-[#0B0F19] stroke-white stroke-2 shadow-lg cursor-pointer hover:stroke-teal-400 transition-colors`} 
-                />
+                <div className="text-right shrink-0 flex items-center gap-4">
+                  <div>
+                    <p className="text-[10px] dark:text-slate-400 text-slate-550 uppercase tracking-wider font-semibold">{translate("Total Spend", language)}</p>
+                    <p className="font-extrabold text-sm mt-0.5 text-teal-500">{formatINR(pair.totalSpend)}</p>
+                  </div>
+                  <div className="flex flex-col gap-1 items-end">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      pair.riskLevel === "High" ? "bg-rose-500/10 text-rose-500" : "bg-amber-500/10 text-amber-500"
+                    }`}>
+                      {translate(pair.riskLevel, language)}
+                    </span>
+                    {reviewedPairs.includes(pair.id) && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[9px] font-bold">
+                        ✓ {translate("Reviewed", language)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Expanded Area */}
+              {expandedCardId === pair.id && (
+                <div className="p-6 border-t dark:border-slate-800/80 border-slate-200/80 space-y-6">
+                  {/* View Role Tabs */}
+                  <div className="flex border-b dark:border-slate-800 border-slate-200">
+                    <button 
+                      onClick={() => setViewRole("smb")}
+                      className={`py-2 px-4 text-xs font-bold border-b-2 transition ${viewRole === "smb" ? "border-teal-500 text-teal-600 dark:text-teal-400" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+                    >
+                      💼 {translate("SMB Owner View (Plain Language)", language)}
+                    </button>
+                    <button 
+                      onClick={() => setViewRole("judge")}
+                      className={`py-2 px-4 text-xs font-bold border-b-2 transition ${viewRole === "judge" ? "border-teal-500 text-teal-600 dark:text-teal-400" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+                    >
+                      🧑‍⚖️ {translate("Judge View (AI Agent Reasoning)", language)}
+                    </button>
+                  </div>
+
+                  {viewRole === "smb" ? (
+                    /* SMB OWNER VIEW */
+                    <div className="space-y-6">
+                      
+                      {/* Trend Bars */}
+                      <div className="space-y-3">
+                        <p className="font-semibold text-xs dark:text-slate-350 text-slate-600">{translate("Monthly Spend vs Category Limit", language)}</p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          {pair.monthlySpend.map((ms, idx) => {
+                            const percent = Math.min((ms.amount / ms.limit) * 100, 100);
+                            const isOver = ms.amount > ms.limit;
+                            return (
+                              <div key={idx} className="p-3 border dark:border-slate-800 border-slate-200 rounded-lg dark:bg-slate-900/60 bg-white space-y-2">
+                                <div className="flex justify-between text-[11px] font-sans">
+                                  <span className="font-medium">{translate(ms.month, language)}</span>
+                                  <span className={isOver ? "text-rose-500 font-bold" : "dark:text-slate-400 text-slate-600"}>
+                                    {formatINR(ms.amount)} / {formatINR(ms.limit)}
+                                  </span>
+                                </div>
+                                <div className="h-2 w-full rounded-full dark:bg-slate-800 bg-slate-200 overflow-hidden">
+                                  <div 
+                                    className={`h-full rounded-full ${isOver ? "bg-rose-500" : "bg-teal-500"}`}
+                                    style={{ width: `${percent}%` }}
+                                  ></div>
+                                </div>
+                                {isOver && (
+                                  <p className="text-[9px] text-rose-500 font-medium">⚠️ {translate("Exceeds Category Limit", language)}</p>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* What to Do Box */}
+                      <div className={`p-4 rounded-xl border ${isDarkMode ? "bg-amber-500/5 border-amber-500/20" : "bg-amber-50/50 border-amber-200"}`}>
+                        <h5 className="font-bold text-xs dark:text-amber-400 text-amber-700 flex items-center gap-1.5">
+                          ⚠️ {translate("What to Do Recommendation", language)}
+                        </h5>
+                        <p className="text-xs dark:text-slate-300 text-slate-700 mt-2 leading-relaxed">
+                          {translate(pair.whatToDo, language)}
+                        </p>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex flex-wrap gap-3 pt-2">
+                        <button 
+                          onClick={() => alert(`Escalated: Risk pair ${pair.employee} & ${pair.vendor} has been submitted to the Internal Auditing Board and Legal team for standard investigation.`)}
+                          className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold shadow-sm transition"
+                        >
+                          🚀 {translate("Escalate Alert", language)}
+                        </button>
+                        <button 
+                          onClick={() => { setLanguage("EN"); setStatusFilter("All"); setSearchQuery(pair.employee); setActiveTab("transactions"); }}
+                          className="px-3.5 py-2 dark:bg-slate-800 bg-slate-100 hover:bg-slate-200 dark:hover:bg-slate-700 border dark:border-slate-700 border-slate-200 rounded-lg text-xs font-semibold transition"
+                        >
+                          🔍 {translate("View All Transactions", language)}
+                        </button>
+                        <button 
+                          onClick={() => { markReviewed(pair.id); alert(`${pair.employee} ↔ ${pair.vendor} marked as reviewed.`); }}
+                          className="px-3.5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-semibold shadow-sm transition"
+                        >
+                          ✓ {translate("Mark Reviewed", language)}
+                        </button>
+                      </div>
+
+                    </div>
+                  ) : (
+                    /* JUDGE VIEW (AI Agent reasoning trail) */
+                    <div className="space-y-4">
+                      <h5 className="font-bold text-xs dark:text-slate-400 text-slate-500 uppercase tracking-wider">{translate("AI Agent Multi-Agent Logs", language)}</h5>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        
+                        <div className="p-3 rounded-lg dark:bg-slate-900 bg-slate-50 border dark:border-slate-800 border-slate-200 text-xs shadow-sm">
+                          <div className="flex justify-between items-center font-bold">
+                            <span>📥 {translate("Intake Agent", language)}</span>
+                            <span className="text-emerald-500 text-[10px]">{translate("SUCCESS", language)}</span>
+                          </div>
+                          <p className="dark:text-slate-400 text-slate-600 mt-1 text-[11px]">
+                            {translate("Successfully parsed invoice image. Vendor name, date, category and amount verified.", language)}
+                          </p>
+                        </div>
+
+                        <div className="p-3 rounded-lg dark:bg-slate-900 bg-slate-50 border dark:border-slate-800 border-slate-200 text-xs shadow-sm">
+                          <div className="flex justify-between items-center font-bold">
+                            <span>⚖️ {translate("Compliance Agent", language)}</span>
+                            <span className="text-rose-500 text-[10px]">{translate(pair.reasoningTrail.compliance.status, language)}</span>
+                          </div>
+                          <p className="dark:text-slate-400 text-slate-600 mt-1 text-[11px]">
+                            {translate(pair.reasoningTrail.compliance.message, language)}
+                          </p>
+                        </div>
+
+                        <div className="p-3 rounded-lg dark:bg-slate-900 bg-slate-50 border dark:border-slate-800 border-slate-200 text-xs shadow-sm">
+                          <div className="flex justify-between items-center font-bold">
+                            <span>🕵️ {translate("Fraud Detection Agent", language)}</span>
+                            <span className="text-rose-500 text-[10px]">{translate(pair.reasoningTrail.fraud.status, language)}</span>
+                          </div>
+                          <div className="dark:text-slate-400 text-slate-600 mt-1 text-[11px] space-y-1">
+                            <p>{translate("Duplicate Risk:", language)} <b>{translate(pair.reasoningTrail.fraud.duplicateRisk, language)}</b></p>
+                            <p>{translate("Collusion Risk:", language)} <b>{translate(pair.reasoningTrail.fraud.collusionRisk, language)}</b></p>
+                            {pair.reasoningTrail.fraud.flags.map((flag, idx) => (
+                              <p key={idx} className="text-rose-500 mt-1">{translate(flag, language)}</p>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="p-3 rounded-lg dark:bg-slate-900 bg-slate-50 border dark:border-slate-800 border-slate-200 text-xs shadow-sm">
+                          <div className="flex justify-between items-center font-bold">
+                            <span>🏢 {translate("Vendor Verification Agent", language)}</span>
+                            <span className={pair.gstinStatus === "Verified" ? "text-emerald-500 text-[10px]" : "text-rose-500 text-[10px]"}>
+                              {translate(pair.gstinStatus.toUpperCase(), language)}
+                            </span>
+                          </div>
+                          <p className="dark:text-slate-400 text-slate-600 mt-1 text-[11px]">
+                            GSTIN: <span className="font-mono">{pair.gstin}</span>. {translate(pair.reasoningTrail.vendor.message, language)}
+                          </p>
+                        </div>
+
+                      </div>
+
+                      <div className="p-3 rounded-lg dark:bg-teal-950/20 bg-teal-50/40 border dark:border-teal-500/30 border-teal-200/50 text-xs">
+                        <div className="font-bold dark:text-teal-400 text-teal-700 flex items-center gap-1">
+                          <span>🤖 {translate("Lead Orchestrator Agent Verdict", language)}</span>
+                        </div>
+                        <p className="dark:text-teal-100 text-teal-900 font-semibold mt-1 text-[11px]">
+                          {translate(pair.reasoningTrail.orchestrator.reasoning, language)}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* Network Graph View */
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
+            <div className="p-4 rounded-xl border dark:bg-slate-900/40 bg-slate-50 dark:border-slate-800 border-slate-200/80 space-y-2">
+              <p className="font-semibold text-teal-600 dark:text-teal-400">{translate("Node Legend", language)}</p>
+              <div className="flex gap-4 items-center mt-1">
+                <span className="flex items-center gap-1.5 dark:text-slate-300 text-slate-700">
+                  <span className="w-3.5 h-3.5 rounded-full bg-teal-600 inline-block"></span>
+                  {translate("Employee", language)}
+                </span>
+                <span className="flex items-center gap-1.5 dark:text-slate-300 text-slate-700">
+                  <span className="w-3.5 h-3.5 rounded-full bg-indigo-600 inline-block"></span>
+                  {translate("Verified Vendor", language)}
+                </span>
+                <span className="flex items-center gap-1.5 dark:text-slate-300 text-slate-700">
+                  <span className="w-3.5 h-3.5 rounded-full bg-rose-600 inline-block"></span>
+                  {translate("Invalid/Suspicious Vendor", language)}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl border dark:bg-slate-900/40 bg-slate-50 dark:border-slate-800 border-slate-200/80 space-y-2">
+              <p className="font-semibold text-amber-600 dark:text-amber-500">{translate("Connection Types", language)}</p>
+              <div className="flex gap-4 items-center mt-1 text-slate-700 dark:text-slate-355">
+                <span className="flex items-center gap-1.5">
+                  <span className="h-0.5 w-6 bg-slate-400 dark:bg-slate-600 inline-block"></span>
+                  {translate("Standard Expense", language)}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-1 w-6 bg-rose-500 inline-block"></span>
+                  {translate("High Collusion Risk (Thick/Red)", language)}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl border dark:bg-slate-900/40 bg-slate-50 dark:border-slate-800 border-slate-200/80 flex items-center justify-between">
+              <div>
+                <p className="font-semibold dark:text-slate-300 text-slate-700">{translate("Interactive Controls", language)}</p>
+                <p className="text-[11px] dark:text-slate-400 text-slate-500 mt-1">{translate("Drag nodes to rearrange or pull nodes apart to visually inspect transaction paths.", language)}</p>
+              </div>
+            </div>
+          </div>
+
+          <div 
+            ref={containerRef}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            className="w-full h-[500px] border dark:border-slate-800 border-slate-200 rounded-xl relative overflow-hidden dark:bg-[#070A11] bg-slate-50 cursor-grab active:cursor-grabbing"
+          >
+            <svg className="w-full h-full">
+              {/* Draw Connection Edges */}
+              {edges.map((edge, idx) => {
+                const source = nodes.find(n => n.id === edge.from);
+                const target = nodes.find(n => n.id === edge.to);
+                if (!source || !target) return null;
                 
-                {/* Label text */}
-                <text 
-                  y={isVendor ? -18 : 22} 
-                  textAnchor="middle" 
-                  fontSize="10px" 
-                  className="dark:fill-slate-200 fill-slate-800 font-semibold font-sans"
-                  style={isDarkMode ? { textShadow: "0 1px 2px rgba(0,0,0,0.8)" } : { textShadow: "0 1px 1px rgba(255,255,255,0.8)" }}
-                >
-                  {node.label}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
+                return (
+                  <g key={`edge-${idx}`}>
+                    <line 
+                      x1={source.x} 
+                      y1={source.y} 
+                      x2={target.x} 
+                      y2={target.y} 
+                      stroke={edge.suspicious ? "#F43F5E" : (isDarkMode ? "#475569" : "#94A3B8")} 
+                      strokeWidth={edge.suspicious ? 3 : Math.min(1 + edge.tx_count * 0.5, 4)} 
+                      opacity={edge.suspicious ? 0.9 : 0.4}
+                    />
+                    {edge.tx_count > 2 && (
+                      <g transform={`translate(${(source.x + target.x) / 2}, ${(source.y + target.y) / 2})`}>
+                        <rect x="-12" y="-8" width="24" height="15" rx="3" fill={isDarkMode ? "#0B0F19" : "#FFFFFF"} stroke={isDarkMode ? "#334155" : "#CBD5E1"} strokeWidth="1" />
+                        <text textAnchor="middle" y="3" fontSize="9px" className="dark:fill-slate-400 fill-slate-650 font-semibold">{edge.tx_count}</text>
+                      </g>
+                    )}
+                  </g>
+                );
+              })}
+
+              {/* Draw Nodes */}
+              {nodes.map(node => {
+                const isVendor = node.type === "vendor";
+                let color = "fill-teal-600";
+                if (isVendor) {
+                  color = node.gstin_status === "Invalid" ? "fill-rose-600" : "fill-indigo-600";
+                }
+                
+                return (
+                  <g 
+                    key={node.id} 
+                    transform={`translate(${node.x}, ${node.y})`}
+                    onMouseDown={(e) => handleMouseDown(e, node.id)}
+                    className="select-none"
+                  >
+                    {(node.label === "Apex Consulting Services" || node.label === "Garg Stationery & Xerox" || node.label === "Kabir Rao" || node.label === "Arjun Gupta") && (
+                      <circle r="22" className="fill-none stroke-rose-500 opacity-60 animate-ping" strokeWidth="1" />
+                    )}
+
+                    <circle 
+                      r={isVendor ? 12 : 10} 
+                      className={`${color} dark:stroke-[#0B0F19] stroke-white stroke-2 shadow-lg cursor-pointer hover:stroke-teal-400 transition-colors`} 
+                    />
+                    
+                    <text 
+                      y={isVendor ? -18 : 22} 
+                      textAnchor="middle" 
+                      fontSize="10px" 
+                      className="dark:fill-slate-200 fill-slate-800 font-semibold font-sans"
+                      style={isDarkMode ? { textShadow: "0 1px 2px rgba(0,0,0,0.8)" } : { textShadow: "0 1px 1px rgba(255,255,255,0.8)" }}
+                    >
+                      {node.label}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+        </div>
+      )}
 
     </div>
   );

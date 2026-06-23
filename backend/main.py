@@ -317,7 +317,8 @@ def get_network_graph(db: Session = Depends(get_db)):
         # Retrieve the graph collusion metrics we calculated in the graph tool
         # (kabir rao & apex consulting) or (arjun gupta & garg stationery)
         if (conn.employee_name == "Kabir Rao" and conn.vendor_name == "Apex Consulting Services") or \
-           (conn.employee_name == "Arjun Gupta" and conn.vendor_name == "Garg Stationery & Xerox"):
+           (conn.employee_name == "Arjun Gupta" and conn.vendor_name == "Garg Stationery & Xerox") or \
+           (conn.employee_name == "Diya Sharma" and conn.vendor_name == "Shree Balaji Printers"):
             is_suspicious = True
 
         edges.append({
@@ -355,3 +356,23 @@ def update_policy(
     rule.approval_threshold = approval_threshold
     db.commit()
     return {"status": "success", "message": f"Policy rules for '{category}' updated successfully."}
+
+@app.post("/api/transactions/{tx_id}/verdict")
+def update_transaction_verdict(
+    tx_id: int,
+    verdict: str = Form(...),
+    reasoning: str = Form(""),
+    db: Session = Depends(get_db)
+):
+    from mcp_server import flag_transaction
+    
+    # Check if transaction exists
+    tx = db.query(Transaction).filter(Transaction.id == tx_id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+        
+    res = flag_transaction(tx_id, verdict, reasoning)
+    if res.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res.get("message"))
+        
+    return res
