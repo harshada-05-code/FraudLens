@@ -350,7 +350,15 @@ def update_policy(
 ):
     rule = db.query(PolicyRule).filter(PolicyRule.category == category).first()
     if not rule:
-        raise HTTPException(status_code=404, detail="Category policy not found")
+        # Create a new policy rule for the custom category
+        rule = PolicyRule(
+            category=category,
+            max_amount=max_amount,
+            approval_threshold=approval_threshold
+        )
+        db.add(rule)
+        db.commit()
+        return {"status": "success", "message": f"Policy rules for new category '{category}' created successfully."}
         
     rule.max_amount = max_amount
     rule.approval_threshold = approval_threshold
