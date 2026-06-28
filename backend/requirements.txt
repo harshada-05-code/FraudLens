@@ -1,0 +1,9 @@
+google-adk
+mcp
+fastapi
+uvicorn
+sqlalchemy
+pymysql
+pydantic
+cryptography
+jinja2
