@@ -1,10 +1,9 @@
-# Use official Python runtime as a parent image
 FROM python:3.10-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app/backend
+ENV PYTHONPATH=/app
 
 # Set work directory
 WORKDIR /app
@@ -20,10 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend application files
-COPY backend/ /app/backend/
+# Copy all files from the build context (backend/) to /app
+COPY . .
 
-# Expose port 8080 (Google Cloud Run default port)
+# Expose port 8080 (Google Cloud Run / Render default port)
 EXPOSE 8080
 
 # Run uvicorn server
