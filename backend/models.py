@@ -3,6 +3,16 @@ from datetime import datetime
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Date, ForeignKey, JSON
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
+# Load environment variables from .env file if it exists
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+if os.path.exists(env_path):
+    with open(env_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, val = line.split("=", 1)
+                os.environ[key.strip()] = val.strip()
+
 # Load database URL from environment variable or use local default
 DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:@localhost:3306/fraudlens")
 

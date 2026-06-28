@@ -29,20 +29,97 @@ USE_REAL_AGENTS = ADK_AVAILABLE and GEMINI_API_KEY is not None
 # Configure Gemini model
 MODEL_NAME = "gemini-2.5-flash"
 
+def pre_screen_receipt(tx: Transaction) -> tuple[bool, str]:
+    """
+    Validates if the uploaded file is a valid receipt/invoice or an arbitrary image.
+    Returns (is_valid, reason).
+    """
+    if not tx.receipt_url:
+        return True, "No receipt file uploaded, proceeding with manual metadata check."
+
+    # Resolve receipt file path
+    filename = os.path.basename(tx.receipt_url)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(current_dir, "static", "receipts", filename)
+
+    if not os.path.exists(file_path):
+        return True, "Receipt file path does not exist, skipping image content check."
+
+    # 1. Fallback / Offline rule-based check on filename
+    fn_lower = filename.lower()
+    
+    # Check if the filename belongs to a known arbitrary image
+    non_receipt_keywords = [
+        "badge", "landscape", "wallpaper", "avatar", "profile", "photo", "meme", 
+        "random", "dog", "cat", "monkey", "animal", "sunset", "flower", "nature"
+    ]
+    for kw in non_receipt_keywords:
+        if kw in fn_lower:
+            return False, "The uploaded file does not appear to be a valid financial receipt or invoice. Please submit a clear image of your bill."
+
+    # 2. If Gemini API is available, we can use Gemini to inspect the image
+    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if gemini_key:
+        try:
+            from google import genai
+            client = genai.Client()
+            
+            with open(file_path, "rb") as f:
+                image_bytes = f.read()
+                
+            mime_type = "image/png"
+            if fn_lower.endswith(".jpg") or fn_lower.endswith(".jpeg"):
+                mime_type = "image/jpeg"
+            elif fn_lower.endswith(".webp"):
+                mime_type = "image/webp"
+            elif fn_lower.endswith(".pdf"):
+                mime_type = "application/pdf"
+                
+            prompt = (
+                "You are an expense intake validator. Analyze the uploaded document or image. "
+                "Does this document/image look like a receipt, invoice, bill, ticket, or transaction slip? "
+                "Respond with exactly 'yes' or 'no' (no other text, punctuation, or explanation)."
+            )
+            
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=[
+                    types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                    prompt
+                ]
+            )
+            
+            answer = response.text.strip().lower()
+            if "no" in answer:
+                return False, "The uploaded file does not appear to be a valid financial receipt or invoice. Please submit a clear image of your bill."
+        except Exception as e:
+            print(f"Gemini pre-screening check encountered an error: {e}. Falling back to filename check.")
+            
+    return True, "Pre-screening passed."
+
 if USE_REAL_AGENTS:
     # Set the key in environment for google-genai
     if os.getenv("GEMINI_API_KEY") is None and os.getenv("GOOGLE_API_KEY") is not None:
         os.environ["GEMINI_API_KEY"] = os.getenv("GOOGLE_API_KEY")
 
+
     # Define ADK Agents
     intake_agent = Agent(
         name="IntakeAgent",
         model=MODEL_NAME,
-        description="Parses invoice or receipt text and extracts vendor name, amount, date, and category.",
+        description="Acts as the Intake Gatekeeper Agent for FraudLens. Inspects input and extracts details.",
         instruction=(
-            "You are an expense intake specialist. Extract the vendor name, amount (float value), "
-            "date (YYYY-MM-DD), and expense category (Travel, Meals, Software, Office Supplies, Consulting, or Hardware) "
-            "from the raw text. Return a JSON object with keys: vendor, amount, date, category."
+            "You are the Intake Gatekeeper Agent for FraudLens. Your first task is to inspect the uploaded image or text string.\n\n"
+            "Determine if the input is a legitimate financial receipt, invoice, bill, or ticket.\n"
+            "- IF IT IS NOT a receipt (e.g., it is a photo of study notes, scenery, a random object, or conversational text):\n"
+            "  Return a strict JSON response:\n"
+            "  {\n"
+            "    \"is_valid_document\": false,\n"
+            "    \"error_message\": \"The uploaded file does not appear to be a valid financial receipt or invoice. Please submit a clear image of your bill.\"\n"
+            "  }\n\n"
+            "- IF IT IS a receipt:\n"
+            "  Proceed to extract the Vendor Name, Amount, Date, and GSTIN as usual. Return a JSON object with keys: "
+            "is_valid_document (true), vendor, amount, date, category (Travel, Meals, Software, Office Supplies, Consulting, or Hardware), gstin."
         )
     )
 
@@ -113,11 +190,13 @@ def run_fallback_audit(tx: Transaction, db: Session) -> dict:
     
     intake_result = {
         "status": "success",
+        "is_valid_document": True,
         "extracted": {
             "vendor": vendor.name,
             "amount": amount,
             "date": date_str,
-            "category": category
+            "category": category,
+            "gstin": vendor.gstin
         }
     }
 
@@ -235,6 +314,46 @@ async def audit_transaction(transaction_id: int) -> dict:
         tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
         if not tx:
             return {"status": "error", "message": "Transaction not found"}
+
+        # Run pre-screening guardrail check
+        is_valid, reason = pre_screen_receipt(tx)
+        if not is_valid:
+            # Reject immediately
+            tx.status = "Flagged"
+            tx.verdict = "Rejected"
+            tx.reasoning_trail = {
+                "intake": {
+                    "status": "failed",
+                    "extracted": None,
+                    "message": f"Intake pre-screening failed: {reason}"
+                },
+                "compliance": {
+                    "status": "skipped",
+                    "flags": [],
+                    "message": "Compliance check skipped due to intake pre-screening failure."
+                },
+                "fraud": {
+                    "status": "skipped",
+                    "duplicate_risk": "Low",
+                    "collusion_risk": "Low",
+                    "flags": [],
+                    "message": "Fraud check skipped due to intake pre-screening failure."
+                },
+                "vendor": {
+                    "status": "skipped",
+                    "gstin_status": "Unverified",
+                    "message": "Vendor check skipped due to intake pre-screening failure."
+                }
+            }
+            db.commit()
+            return {
+                "status": "success",
+                "agent": "Intake Guardrail",
+                "transaction_id": tx.id,
+                "verdict": "Rejected",
+                "reasoning": f"Transaction rejected due to: pre-screening failed ({reason}).",
+                "trail": tx.reasoning_trail
+            }
 
         if USE_REAL_AGENTS:
             # Running via Google ADK

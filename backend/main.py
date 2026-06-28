@@ -10,7 +10,15 @@ from models import SessionLocal, Transaction, Vendor, Employee, PolicyRule
 from mcp_server import get_dashboard_summary
 from agents import audit_transaction
 
+from fastapi.staticfiles import StaticFiles
+
 app = FastAPI(title="FraudLens API")
+
+# Ensure static/receipts directory exists relative to this file
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(CURRENT_DIR, "static", "receipts")
+os.makedirs(STATIC_DIR, exist_ok=True)
+app.mount("/receipts", StaticFiles(directory=STATIC_DIR), name="receipts")
 
 # Enable CORS for frontend integration
 app.add_middleware(
@@ -128,9 +136,10 @@ async def upload_transaction(
     vendor = db.query(Vendor).filter(Vendor.name == vendor_name).first()
     if not vendor:
         # Create a new vendor, verify GSTIN if provided
+        gstin_val = gstin or f"27UNV{random.randint(1000000000, 9999999999)}"
         vendor = Vendor(
             name=vendor_name,
-            gstin=gstin or "27UNVERIFIED123",
+            gstin=gstin_val,
             status="Unverified" if not gstin else ("Verified" if len(gstin) == 15 else "Invalid")
         )
         db.add(vendor)
@@ -171,44 +180,165 @@ async def upload_transaction(
 @app.post("/api/intake/whatsapp")
 async def whatsapp_intake(
     employee_name: str = Form(...),
-    message_text: str = Form(...), # e.g. "Forwarding invoice of 1500 INR for lunch at Dhaba Express"
+    message_text: str = Form(""), # e.g. "Forwarding invoice of 1500 INR for lunch at Dhaba Express"
     media_url: str = Form(None),   # simulated receipt photo
+    file: UploadFile = File(None), # the uploaded file
     db: Session = Depends(get_db)
 ):
-    # Parse transaction info from text using basic NLP heuristics
+    # Parse transaction info from text using basic NLP / OCR heuristics
     amount = 500.0  # default
     vendor_name = "Local Vendor"
     category = "Meals"
     
-    # Try to extract amount
-    amt_match = re.search(r"(\d+(\.\d+)?)", message_text)
-    if amt_match:
-        amount = float(amt_match.group(1))
+    # Check if a file is provided and save it
+    if file:
+        file_path = os.path.join(STATIC_DIR, file.filename)
+        try:
+            with open(file_path, "wb") as f_out:
+                content = await file.read()
+                f_out.write(content)
+            media_url = f"/receipts/{file.filename}"
+        except Exception as e:
+            print(f"Error saving uploaded file: {e}")
+            
+        # Parse filename for keywords first (Simulated OCR)
+        fn_lower = file.filename.lower()
+        if "indigo" in fn_lower:
+            vendor_name = "Indigo Airlines"
+            amount = 28499.0
+            category = "Travel"
+        elif "dhaba" in fn_lower:
+            vendor_name = "Dhaba Express Ltd"
+            amount = 4500.0
+            category = "Meals"
+        elif "apex" in fn_lower:
+            vendor_name = "Apex Consulting Services"
+            amount = 145000.0
+            category = "Consulting"
+        elif "wework" in fn_lower:
+            vendor_name = "WeWork India"
+            amount = 65000.0
+            category = "Travel"
+        elif "aws" in fn_lower:
+            vendor_name = "AWS Cloud Services"
+            amount = 120000.0
+            category = "Software"
+        elif "microsoft" in fn_lower:
+            vendor_name = "Microsoft India Ltd"
+            amount = 95000.0
+            category = "Software"
+        elif "chai" in fn_lower:
+            vendor_name = "Chai Point Corp"
+            amount = 350.0
+            category = "Meals"
+        elif "staples" in fn_lower:
+            vendor_name = "Staples Office Solutions"
+            amount = 1200.0
+            category = "Office Supplies"
+        elif "taj" in fn_lower:
+            vendor_name = "Taj Hotels"
+            amount = 45000.0
+            category = "Travel"
+        elif "ola" in fn_lower:
+            vendor_name = "Ola Cabs"
+            amount = 850.0
+            category = "Travel"
+        elif "uber" in fn_lower:
+            vendor_name = "Uber India"
+            amount = 650.0
+            category = "Travel"
+        elif "bluedart" in fn_lower:
+            vendor_name = "Blue Dart Express"
+            amount = 450.0
+            category = "Office Supplies"
+        elif "dell" in fn_lower:
+            vendor_name = "Dell Technologies"
+            amount = 85000.0
+            category = "Hardware"
+        elif "reliance" in fn_lower:
+            vendor_name = "Reliance Retail"
+            amount = 15000.0
+            category = "Office Supplies"
+        elif "tata" in fn_lower:
+            vendor_name = "Tata Power"
+            amount = 3500.0
+            category = "Hardware"
+        elif "infosys" in fn_lower:
+            vendor_name = "Infosys Ltd"
+            amount = 180000.0
+            category = "Consulting"
+        elif "balaji" in fn_lower:
+            vendor_name = "Shree Balaji Printers"
+            amount = 2500.0
+            category = "Office Supplies"
+        elif "garg" in fn_lower:
+            vendor_name = "Garg Stationery & Xerox"
+            amount = 450.0
+            category = "Office Supplies"
+        else:
+            # Try to extract numbers from filename as amount
+            nums = re.findall(r"(\d+)", file.filename)
+            if nums:
+                amount = float(nums[0])
+            # Clean filename for vendor name
+            cleaned_name = re.sub(r"[_\-\d\.]", " ", file.filename).strip()
+            # remove common extensions and words
+            cleaned_name = re.sub(r"(png|jpg|jpeg|pdf|gif|receipt|invoice|bill)", "", cleaned_name, flags=re.IGNORECASE).strip()
+            if cleaned_name:
+                vendor_name = cleaned_name.title()
+                
+            # Category fallback check
+            if "travel" in fn_lower or "flight" in fn_lower or "cab" in fn_lower or "hotel" in fn_lower:
+                category = "Travel"
+            elif "meal" in fn_lower or "lunch" in fn_lower or "dinner" in fn_lower or "food" in fn_lower:
+                category = "Meals"
+            elif "software" in fn_lower or "saas" in fn_lower or "license" in fn_lower:
+                category = "Software"
+            elif "supplies" in fn_lower or "stationery" in fn_lower or "print" in fn_lower:
+                category = "Office Supplies"
+            elif "consulting" in fn_lower or "consult" in fn_lower:
+                category = "Consulting"
+            elif "hardware" in fn_lower or "laptop" in fn_lower or "monitor" in fn_lower:
+                category = "Hardware"
 
-    # Try to extract vendor (e.g. "at Dhaba Express", "from Indigo")
-    vendor_match = re.search(r"(at|from|with)\s+([A-Za-z0-9\s]+)", message_text, re.IGNORECASE)
-    if vendor_match:
-        vendor_name = vendor_match.group(2).strip()
-    
-    # Heuristics for category
-    msg_lower = message_text.lower()
-    if "flight" in msg_lower or "cab" in msg_lower or "travel" in msg_lower or "taxi" in msg_lower or "hotel" in msg_lower:
-        category = "Travel"
-    elif "lunch" in msg_lower or "dinner" in msg_lower or "meals" in msg_lower or "food" in msg_lower or "chai" in msg_lower:
-        category = "Meals"
-    elif "software" in msg_lower or "aws" in msg_lower or "license" in msg_lower or "saas" in msg_lower:
-        category = "Software"
-    elif "stationery" in msg_lower or "paper" in msg_lower or "supplies" in msg_lower or "print" in msg_lower:
-        category = "Office Supplies"
-    elif "consulting" in msg_lower or "advisor" in msg_lower or "contractor" in msg_lower:
-        category = "Consulting"
-    elif "laptop" in msg_lower or "monitor" in msg_lower or "hardware" in msg_lower or "keyboard" in msg_lower:
-        category = "Hardware"
+    # If message_text is provided, we can parse it to overlay/extract info
+    if message_text.strip():
+        # Try to extract amount from text
+        amt_match = re.search(r"(\d+(\.\d+)?)", message_text)
+        if amt_match:
+            amount = float(amt_match.group(1))
+
+        # Try to extract vendor (e.g. "at Dhaba Express", "from Indigo")
+        vendor_match = re.search(r"(at|from|with)\s+([A-Za-z0-9\s]+)", message_text, re.IGNORECASE)
+        if vendor_match:
+            vendor_name = vendor_match.group(2).strip()
+        
+        # Heuristics for category
+        msg_lower = message_text.lower()
+        if "flight" in msg_lower or "cab" in msg_lower or "travel" in msg_lower or "taxi" in msg_lower or "hotel" in msg_lower:
+            category = "Travel"
+        elif "lunch" in msg_lower or "dinner" in msg_lower or "meals" in msg_lower or "food" in msg_lower or "chai" in msg_lower:
+            category = "Meals"
+        elif "software" in msg_lower or "aws" in msg_lower or "license" in msg_lower or "saas" in msg_lower:
+            category = "Software"
+        elif "stationery" in msg_lower or "paper" in msg_lower or "supplies" in msg_lower or "print" in msg_lower:
+            category = "Office Supplies"
+        elif "consulting" in msg_lower or "advisor" in msg_lower or "contractor" in msg_lower:
+            category = "Consulting"
+        elif "laptop" in msg_lower or "monitor" in msg_lower or "hardware" in msg_lower or "keyboard" in msg_lower:
+            category = "Hardware"
+
+    # Try to extract GSTIN from text
+    extracted_gstin = None
+    gstin_match = re.search(r"GSTIN\s*:\s*([A-Za-z0-9]+)", message_text, re.IGNORECASE)
+    if not gstin_match:
+        gstin_match = re.search(r"\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})\b", message_text, re.IGNORECASE)
+    if gstin_match:
+        extracted_gstin = gstin_match.group(1).upper()
 
     # Find or create employee
     employee = db.query(Employee).filter(Employee.name.like(f"%{employee_name}%")).first()
     if not employee:
-        # Create a new employee if doesn't exist
         employee = Employee(
             name=employee_name,
             email=f"{employee_name.lower().replace(' ', '.')}@company.in",
@@ -221,12 +351,24 @@ async def whatsapp_intake(
     # Find or create Vendor
     vendor = db.query(Vendor).filter(Vendor.name.like(f"%{vendor_name}%")).first()
     if not vendor:
+        gstin_val = extracted_gstin or f"27UNV{random.randint(1000000000, 9999999999)}"
+        status_val = "Unverified"
+        if extracted_gstin:
+            gstin_ver = verify_gstin(extracted_gstin)
+            status_val = gstin_ver["status"].capitalize()
         vendor = Vendor(
             name=vendor_name,
-            gstin=None,
-            status="Unverified"
+            gstin=gstin_val,
+            status=status_val
         )
         db.add(vendor)
+        db.commit()
+        db.refresh(vendor)
+    elif extracted_gstin:
+        # Update existing vendor's GSTIN if provided
+        vendor.gstin = extracted_gstin
+        gstin_ver = verify_gstin(extracted_gstin)
+        vendor.status = gstin_ver["status"].capitalize()
         db.commit()
         db.refresh(vendor)
 
@@ -249,14 +391,21 @@ async def whatsapp_intake(
     # Run audit pipeline
     audit_res = await audit_transaction(tx.id)
 
-    verdict_emoji = "✅" if audit_res.get("verdict") == "Auto-Approved" else "⚠️" if audit_res.get("verdict") == "Flagged for Review" else "❌"
-    
-    reply_msg = (
-        f"Hi {employee.name}, I've received your receipt for *{amount} INR* from *{vendor.name}*.\n\n"
-        f"🛡️ *FraudLens Agent Verdict*: {verdict_emoji} *{audit_res.get('verdict')}*\n"
-        f"Reasoning: {audit_res.get('reasoning')}\n\n"
-        f"You can view the detailed audit logs on your FraudLens dashboard."
-    )
+    if audit_res.get("agent") == "Intake Guardrail":
+        reply_msg = (
+            f"Hi {employee.name}, I've received your upload.\n\n"
+            f"🛡️ *Intake Guardrail Verdict*: ❌ *Rejected*\n"
+            f"Reasoning: The uploaded file does not appear to be a valid receipt or invoice image. Please upload a clear photo of your receipt.\n\n"
+            f"You can check the dashboard for transaction logs."
+        )
+    else:
+        verdict_emoji = "✅" if audit_res.get("verdict") == "Auto-Approved" else "⚠️" if audit_res.get("verdict") == "Flagged for Review" else "❌"
+        reply_msg = (
+            f"Hi {employee.name}, I've received your receipt for *{amount} INR* from *{vendor.name}*.\n\n"
+            f"🛡️ *FraudLens Agent Verdict*: {verdict_emoji} *{audit_res.get('verdict')}*\n"
+            f"Reasoning: {audit_res.get('reasoning')}\n\n"
+            f"You can view the detailed audit logs on your FraudLens dashboard."
+        )
 
     return {
         "status": "success",

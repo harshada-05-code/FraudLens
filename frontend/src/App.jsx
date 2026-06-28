@@ -23,7 +23,8 @@ import {
   DollarSign,
   AlertCircle,
   Info,
-  X
+  X,
+  Paperclip
 } from "lucide-react";
 
 // API Base URL
@@ -124,6 +125,13 @@ const translate = (text, lang) => {
     "Save Policy": "नीति सहेजें",
     "Updated rules for": "के लिए नीति नियम अपडेट किए गए",
     "successfully.": "सफलतापूर्वक।",
+    "Add Custom Category": "कस्टम श्रेणी जोड़ें",
+    "Create a new expense category and define its audit rules. The custom category will immediately be available for manual uploads and compliance policy enforcement.": "एक नई खर्च श्रेणी बनाएं और इसके ऑडिट नियम परिभाषित करें। कस्टम श्रेणी मैनुअल अपलोड और अनुपालन नीति प्रवर्तन के लिए तुरंत उपलब्ध होगी।",
+    "Category Name": "श्रेणी का नाम",
+    "Add Category": "श्रेणी जोड़ें",
+    "e.g. Marketing": "उदा. विपणन",
+    "e.g. 50000": "उदा. 50000",
+    "e.g. 30000": "उदा. 30000",
     
     // Upload screen
     "Manual Receipt Upload": "मैनुअल रसीद अपलोड",
@@ -143,6 +151,9 @@ const translate = (text, lang) => {
     "Send": "भेजें",
     "FraudLens bot is auditing...": "फ्रॉड लेंस बॉट ऑडिट कर रहा है...",
     "Inspect Audit Details →": "ऑडिट विवरण का निरीक्षण करें →",
+    "Attach Receipt Photo": "रसीद की फोटो जोड़ें",
+    "Remove": "हटाएं",
+    "Sent a photo receipt": "रसीद की फोटो भेजी",
     
     // Legend
     "Node Legend": "नोड संकेत (Legend)",
@@ -169,7 +180,18 @@ const translate = (text, lang) => {
     "online": "ऑनलाइन",
     "Welcome to FraudLens WhatsApp Intake. Send a receipt description to analyze it.": "फ्रॉड लेंस व्हाट्सएप इनटेक में आपका स्वागत है। विश्लेषण करने के लिए रसीद का विवरण भेजें।",
     "Elevated repeat transaction frequency between employee and vendor.": "कर्मचारी और विक्रेता के बीच बार-बार लेनदेन की आवृत्ति बढ़ी हुई है।",
-    "Policy check completed.": "नीति उल्लंघन की जांच पूरी हो गई है।"
+    "Policy check completed.": "नीति उल्लंघन की जांच पूरी हो गई है।",
+    "Collusion & Repeat-Billing Risk Analysis": "साठगांठ और बार-बार बिलिंग जोखिम विश्लेषण",
+    "AI Agent analysis showing suspicious employee↔vendor relationships and repeat cluster billing.": "एआई एजेंट विश्लेषण जो कर्मचारियों और विक्रेताओं के बीच संदिग्ध संबंधों और बार-बार होने वाली बिलिंग को दर्शाता है।",
+    "Risk Cards": "जोखिम कार्ड",
+    "Network Graph": "नेटवर्क ग्राफ",
+    "Collusion Alerts": "साठगांठ अलर्ट",
+    "Tight repeated invoice submit patterns": "समान बिल बार-बार जमा करने का संदिग्ध पैटर्न",
+    "Total Capital At Risk": "जोखिम में कुल पूंजी",
+    "Unverified or invalid vendor transactions": "अपुष्ट या अमान्य विक्रेता लेनदेन",
+    "Auditor Status": "ऑडिटर स्थिति",
+    "Review Required": "समीक्षा आवश्यक",
+    "Escalated to Compliance Board": "अनुपालन बोर्ड को अग्रेषित",
   };
 
   if (dict[text]) return dict[text];
@@ -250,11 +272,13 @@ const translate = (text, lang) => {
   translated = translated.replace("Exceeds Hardware limit", "हार्डवेयर (Hardware) की सीमा पार हुई");
   translated = translated.replace("Exceeds Office Supplies limit", "कार्यालय आपूर्ति (Office Supplies) की सीमा पार हुई");
   translated = translated.replace("Exceeds Consulting limit", "परामर्श (Consulting) की सीमा पार हुई");
-  
   translated = translated.replace("Above review threshold", "समीक्षा सीमा से ऊपर");
-  translated = translated.replace("unverified", "असत्यापित");
-  translated = translated.replace("verified", "सत्यापित");
-  translated = translated.replace("invalid", "अमान्य");
+  translated = translated.replace(/Unverified/g, "असत्यापित");
+  translated = translated.replace(/unverified/g, "असत्यापित");
+  translated = translated.replace(/Verified/g, "सत्यापित");
+  translated = translated.replace(/verified/g, "सत्यापित");
+  translated = translated.replace(/Invalid/g, "अमान्य");
+  translated = translated.replace(/invalid/g, "अमान्य");
   translated = translated.replace("INR", "रुपये");
   translated = translated.replace("Duplicate Risk:", "डुप्लिकेट जोखिम:");
   translated = translated.replace("Collusion Risk:", "साठगांठ जोखिम:");
@@ -364,6 +388,8 @@ export default function App() {
   const [waText, setWaText] = useState("");
   const [waEmployee, setWaEmployee] = useState("Ishaan Patel");
   const [isWaTyping, setIsWaTyping] = useState(false);
+  const [waFile, setWaFile] = useState(null);
+  const waFileInputRef = useRef(null);
 
   // Load dashboard and transactions
   const fetchData = async () => {
@@ -480,15 +506,26 @@ export default function App() {
   // Handle WhatsApp Ingestion
   const sendWaMessage = async (textToSend) => {
     const text = textToSend || waText;
-    if (!text.trim()) return;
+    if (!text.trim() && !waFile) return;
 
-    setWaMessages(prev => [...prev, { sender: "user", text }]);
+    const fileUrl = waFile ? URL.createObjectURL(waFile) : null;
+    const fileToUpload = waFile;
+
+    setWaMessages(prev => [...prev, { 
+      sender: "user", 
+      text: text || translate("Sent a photo receipt", language), 
+      image: fileUrl 
+    }]);
     setWaText("");
+    setWaFile(null);
     setIsWaTyping(true);
 
     const formData = new FormData();
     formData.append("employee_name", waEmployee);
-    formData.append("message_text", text);
+    formData.append("message_text", text || "");
+    if (fileToUpload) {
+      formData.append("file", fileToUpload);
+    }
 
     try {
       const res = await fetch(`${API_URL}/intake/whatsapp`, {
@@ -1214,6 +1251,11 @@ export default function App() {
                             ? "dark:bg-[#182229] bg-[#ffeecd] dark:text-amber-300 text-amber-900 border dark:border-[#182229] border-amber-200/40 px-3 py-1.5 rounded-lg shadow-sm text-center mx-auto font-medium"
                             : "dark:bg-[#202c33] bg-white dark:text-slate-100 text-[#111b21] rounded-tl-none whitespace-pre-wrap border dark:border-slate-800/60 border-slate-200 shadow-xs"
                       }`}>
+                        {msg.image && (
+                          <div className="mb-2 max-w-[200px] overflow-hidden rounded-lg border dark:border-slate-700 border-slate-200">
+                            <img src={msg.image} alt="Receipt Attachment" className="w-full h-auto object-contain max-h-[150px]" />
+                          </div>
+                        )}
                         {translate(msg.text, language)}
                         {msg.txId && (
                           <button 
@@ -1260,8 +1302,38 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Attachment Indicator */}
+                {waFile && (
+                  <div className="px-3 py-1.5 dark:bg-[#202c33] bg-[#e1f3fc] border-t dark:border-[#2a3942]/60 border-slate-200 flex items-center justify-between text-xs transition-all duration-300">
+                    <span className="flex items-center gap-1.5 dark:text-slate-350 text-slate-700 font-semibold truncate max-w-[80%]">
+                      🖼️ {waFile.name} ({Math.round(waFile.size / 1024)} KB)
+                    </span>
+                    <button 
+                      onClick={() => setWaFile(null)}
+                      className="text-rose-500 hover:text-rose-700 font-bold"
+                    >
+                      {translate("Remove", language)}
+                    </button>
+                  </div>
+                )}
+
                 {/* Input Bar */}
                 <div className="p-3 dark:bg-[#111b21] bg-[#f0f2f5] border-t dark:border-[#2a3942]/60 border-slate-200 flex gap-2 items-center">
+                  <input 
+                    type="file" 
+                    ref={waFileInputRef} 
+                    onChange={(e) => setWaFile(e.target.files[0])} 
+                    accept="image/*" 
+                    className="hidden" 
+                  />
+                  <button 
+                    onClick={() => waFileInputRef.current && waFileInputRef.current.click()}
+                    className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition shrink-0 p-1"
+                    title={translate("Attach Receipt Photo", language)}
+                  >
+                    <Paperclip className="w-5 h-5" />
+                  </button>
+
                   <input 
                     type="text" 
                     placeholder={translate("Type transaction detail...", language)} 
@@ -1322,7 +1394,7 @@ export default function App() {
                     <input 
                       type="text" 
                       required
-                      placeholder="e.g. Marketing" 
+                      placeholder={translate("e.g. Marketing", language)} 
                       value={newCategoryName}
                       onChange={(e) => setNewCategoryName(e.target.value)}
                       className="w-full dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 rounded-lg px-3 py-1.5 dark:text-slate-100 text-slate-800 outline-none"
@@ -1333,7 +1405,7 @@ export default function App() {
                     <input 
                       type="number" 
                       required
-                      placeholder="e.g. 50000" 
+                      placeholder={translate("e.g. 50000", language)} 
                       value={newCategoryMax}
                       onChange={(e) => setNewCategoryMax(e.target.value)}
                       className="w-full dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 rounded-lg px-3 py-1.5 dark:text-slate-100 text-slate-800 outline-none"
@@ -1344,7 +1416,7 @@ export default function App() {
                     <input 
                       type="number" 
                       required
-                      placeholder="e.g. 30000" 
+                      placeholder={translate("e.g. 30000", language)} 
                       value={newCategoryThreshold}
                       onChange={(e) => setNewCategoryThreshold(e.target.value)}
                       className="w-full dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 rounded-lg px-3 py-1.5 dark:text-slate-100 text-slate-800 outline-none"
