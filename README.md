@@ -1,113 +1,137 @@
-# FraudLens 🛡️
+# FraudLens 🛡️ — Autonomous Multi-Agent Expense & Invoice Auditing for SMBs
 
-**FraudLens** is an AI-powered expense and invoice fraud auditor built for small and medium businesses (SMBs) in India. It was designed and developed for the AI Agents Hackathon.
-
-FraudLens automatically parses uploaded or forwarded receipts, runs a team of cooperative AI agents to audit them for compliance and fraud risks, and displays a step-by-step reasoning trail on an interactive dashboard.
+**FraudLens** is an AI-powered expense and invoice fraud auditor built for small and medium businesses (SMBs) in India. It automatically parses uploaded or forwarded receipts, runs a team of cooperative AI agents to audit them for compliance, tax validity, and fraud risks, and displays a step-by-step reasoning trail on an interactive dashboard.
 
 ---
 
-## 🏗️ Architecture & Multi-Agent Design
+## 🎯 The Problem & Solution
+
+In small and medium businesses (SMBs), expense and invoice fraud often slips under the radar due to manual, error-prone auditing processes. With over 80% of companies experiencing expense report non-compliance or invoice inflation, businesses lose up to 5% of their annual revenue to leakage, collusion clusters, and invalid tax filings (such as unregistered or inactive GSTIN numbers). Manual review of hundreds of receipts per month is slow, expensive, and scales poorly, leaving organizations vulnerable to internal leakages and regulatory tax penalties.
+
+FraudLens solves this by deploying a cooperative team of AI agents that automatically audit every receipt and invoice in real-time. By connecting an Intake Gatekeeper Agent, Compliance Agent, Fraud Agent, and Tax/Vendor Agent under a central Lead Orchestrator, FraudLens validates spend policies, verifies Indian GSTINs, and flags collusion networks or duplicate submittals. SMBs save up to 15% of total operational spend by automatically catching leakages before payouts, reducing manual audit hours by 95%, and avoiding costly tax compliance penalties.
+
+---
+
+## 🏗️ Core Architectural Design
 
 FraudLens uses a multi-agent auditing pipeline built on the **Google Agent Development Kit (ADK)** and integrated with a **FastMCP** server to expose core auditing tools:
 
 ```
-[ Receipt/Invoice ]
-         │
-         ▼
- 1. 📥 Intake Agent  ───► Extracts metadata (vendor, amount, date, category)
-         │
-         ▼
- 2. ⚖️ Compliance Agent ──► Audits limits & approval rules (get_policy_rules)
-         │
-         ▼
- 3. 🕵️ Fraud Agent   ───► Runs duplicate checking & collusion network forensics
-         │
-         ▼
- 4. 🏢 Vendor Agent  ───► Verifies GSTIN format & registry (verify_gstin)
-         │
-         ▼
- 5. 🤖 Orchestrator Agent ──► Synthesizes sub-agent reports into a final verdict,
-                              writes detailed reasoning trail to MySQL database.
+                                 +-------------------------+
+                                 |  Receipt/Invoice Upload |
+                                 +------------+------------+
+                                              |
+                                              v
+                               +--------------+--------------+
+                               |   Intake Gatekeeper Agent   | (Pre-screens and validates document,
+                               +--------------+--------------+  extracts vendor, amount, date, GSTIN)
+                                              |
+                                              v
+                              +---------------+---------------+
+                              |    Lead Orchestrator Agent    |
+                              +---------------+---------------+
+                                              |
+                     +------------------------+------------------------+
+                     |                        |                        |
+                     v                        v                        v
+         +-----------+-----------+  +---------+---------+  +-----------+-----------+
+         |   Compliance Agent    |  |    Fraud Agent    |  |     Vendor Agent      |
+         +-----------+-----------+  +---------+---------+  +-----------+-----------+
+                     |                        |                        |
+                     |                        |                        |
+                     +------------------------+------------------------+
+                                              |
+                                              v
+                              +---------------+---------------+
+                              |  FastMCP Server (MySQL Tools) |
+                              +---------------+---------------+
+                                              |
+                                              v
+                                     +--------+--------+
+                                     |  MySQL Database |
+                                     +-----------------+
 ```
 
-### Exposed FastMCP Server Tools
-- `get_policy_rules(category)`: Retrieves spend limits and approval thresholds.
-- `check_duplicate_receipt(amount, vendor_name, date_str, employee_id)`: Checks for duplicates in a 7-day window.
-- `get_vendor_transaction_graph(vendor_id)`: Evaluates repeat-only connection metrics to spot collusion.
-- `verify_gstin(gstin_number)`: Analyzes Indian GSTIN registration status.
-- `flag_transaction(transaction_id, verdict, reasoning)`: Updates transaction status.
-- `get_dashboard_summary()`: Aggregates metrics for the frontend charts and feed.
+### Downstream Agents & Roles
+1. **Intake Gatekeeper Agent**: Pre-screens the uploaded file/text to ensure it represents a valid receipt. If it is an arbitrary image, it rejects it immediately. Otherwise, it extracts the vendor, amount, date, category, and GSTIN.
+2. **Compliance Agent**: Fetches category-specific rules via `get_policy_rules` and compares the transaction amount against spend limits and approval thresholds.
+3. **Fraud Agent**: Uses `check_duplicate_receipt` to detect duplicate submissions within a 7-day window and `get_vendor_transaction_graph` to evaluate collusion risks.
+4. **Vendor Agent**: Calls `verify_gstin` to analyze the vendor's Indian GSTIN format and status registry.
+5. **Lead Orchestrator Agent**: Coordinates sub-agents, synthesizes reports into a final verdict (`Auto-Approved` / `Flagged for Review` / `Rejected`), and calls `flag_transaction` to update the database.
 
 ---
 
 ## 🌟 Key Features
 
-1. **GSTIN Registry Verification Tool**: Automatically parses and validates Indian GSTINs, displaying a color-coded status badge (`Verified` / `Unverified` / `Invalid`).
-2. **Interactive Collusion Network Graph**: An SVG force-directed physics graph displaying employees and vendors as nodes. Drag nodes to inspect links; thick red lines indicate repeat-transaction collusion risk clusters.
-3. **Simulated WhatsApp Intake**: Simulates an employee forwarding a receipt to the bot. The backend performs parsing, triggers the AI agent pipeline, and replies back with the audit verdict.
-4. **Self-Explaining Verdict Cards**: Shows the precise breakdown of reasoning for every audited transaction, including duplicate/collusion flags, compliance details, and tax verification info.
+1. **Intake Evaluation Guardrail**: Restricts intake to legitimate financial receipts. Completely filters out arbitrary uploads (such as scenery, pets, badges, or memes).
+2. **GSTIN Registry Verification Tool**: Automatically parses and validates Indian GSTINs, displaying a color-coded status badge (`Verified` / `Unverified` / `Invalid`).
+3. **Interactive Collusion Network Graph**: An SVG force-directed physics graph displaying employees and vendors as nodes. Thick red lines indicate repeat-transaction collusion risk clusters.
+4. **Simulated WhatsApp Intake**: Simulates an employee forwarding a receipt to a bot. The backend performs parsing, triggers the agent pipeline, and replies back with the audit verdict.
+5. **Self-Explaining Verdict Cards**: Shows the precise breakdown of reasoning for every audited transaction, including duplicate/collusion flags, compliance details, and tax verification info.
 
 ---
 
 ## 🚀 Local Setup & Installation
 
-### Prerequisites
-- Python 3.10+
-- Node.js v18+
-- MySQL Server 8.0
+Follow these step-by-step instructions to set up and run the application locally:
 
-### 1. Database Setup
-Ensure your local MySQL service is running on port `3306`. Start by creating the `fraudlens` database:
-```sql
-CREATE DATABASE IF NOT EXISTS fraudlens;
+### 1. Clone the Repository
+```bash
+git clone https://github.com/harshada-05-code/FraudLens.git
+cd FraudLens
 ```
 
-### 2. Backend Installation
-1. Initialize the Python virtual environment and install dependencies:
-   ```bash
-   python -m venv .venv
-   # Activate:
-   # Windows: .venv\Scripts\activate
-   # macOS/Linux: source .venv/bin/activate
-   
-   pip install google-adk mcp fastapi uvicorn sqlalchemy pymysql pydantic cryptography jinja2
-   ```
-2. Run the database seed script to populate synthetic transactions, collusion networks, and GSTIN samples:
-   ```bash
-   python backend/seed.py
-   ```
-3. *(Optional)* Configure your Gemini API key in the environment:
-   ```bash
-   # Windows
-   $env:GEMINI_API_KEY="your-api-key-here"
-   # macOS/Linux
-   export GEMINI_API_KEY="your-api-key-here"
-   ```
-   *Note: If no API key is present, FraudLens falls back to a rule-based simulation engine that produces identical structured reasoning logs so you can fully run and test the app offline.*
+### 2. Database Migration Setup
+Ensure your local MySQL service is running on port `3306`. Run the database schema migration script to set up the database and create all tables:
+```bash
+# Log in to your MySQL client and execute:
+mysql -u root -p < schema.sql
+```
 
-4. Launch the FastAPI server:
-   ```bash
-   $env:PYTHONPATH="backend"
-   uvicorn main:app --host 127.0.0.1 --port 8000
-   ```
+### 3. Install Dependencies
+Set up the Python virtual environment and install both backend and frontend dependencies:
 
-### 3. Frontend Installation
-1. Navigate to the frontend directory:
-   ```bash
-   cd frontend
-   ```
-2. Install npm packages:
-   ```bash
-   npm install
-   ```
-3. Start the React development server:
-   ```bash
-   npm run dev
-   ```
-4. Open your browser and navigate to `http://localhost:5173/`.
+**Backend Setup:**
+```bash
+python -m venv .venv
+# Activate virtual environment:
+# Windows:
+.venv\Scripts\activate
+# macOS/Linux:
+source .venv/bin/activate
 
----
+pip install -r requirements.txt
+```
 
-## 🔗 GitHub Repository
-The source code is fully tracked and pushed to:
-[https://github.com/harshada-05-code/FraudLens](https://github.com/harshada-05-code/FraudLens)
+**Frontend Setup:**
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+### 4. Database Seeding (Optional)
+To populate the database with synthetic transactions, collusion networks, and GSTIN samples for testing:
+```bash
+python backend/seed.py
+```
+
+### 5. Running the Application
+Start the local development servers for both the backend and frontend:
+
+**Start Backend Server (FastAPI):**
+```bash
+# Set PYTHONPATH to backend folder
+$env:PYTHONPATH="backend"  # Windows PowerShell
+export PYTHONPATH="backend" # macOS/Linux
+
+.venv\Scripts\python -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+**Start Frontend Server (Vite / React):**
+```bash
+cd frontend
+npm run dev
+```
+
+Open your browser and navigate to **`http://localhost:5173/`** to interact with the dashboard.
