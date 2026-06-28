@@ -6,13 +6,16 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
-from models import SessionLocal, Transaction, Vendor, Employee, PolicyRule
+from models import SessionLocal, Transaction, Vendor, Employee, PolicyRule, init_db
 from mcp_server import get_dashboard_summary
 from agents import audit_transaction
 
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="FraudLens API")
+
+# Automatically initialize database tables on startup
+init_db()
 
 # Ensure static/receipts directory exists relative to this file
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))

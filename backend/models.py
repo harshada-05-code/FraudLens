@@ -13,10 +13,15 @@ if os.path.exists(env_path):
                 key, val = line.split("=", 1)
                 os.environ[key.strip()] = val.strip()
 
-# Load database URL from environment variable or use local default
-DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:@localhost:3306/fraudlens")
+# Fallback to local SQLite if DATABASE_URL is missing
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./fraudlens.db")
 
-engine = create_engine(DATABASE_URL)
+# SQLite needs a specific argument for multithreading flags
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(DATABASE_URL)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
