@@ -76,21 +76,22 @@ Once the deployment completes, it will output a Service URL like:
 ---
 
 ### Step 4: Build & Deploy Frontend on Cloud Run
-We will deploy the frontend container from the `frontend` folder and pass the backend URL as a build argument:
+We will deploy the frontend container from the `frontend` folder and pass the backend URL as a runtime environment variable. Nginx will automatically reverse-proxy any `/api` requests to the backend service at runtime, avoiding any build-time configurations or CORS issues:
 
 ```bash
 # Deploy the frontend service
 gcloud run deploy fraudlens-frontend \
     --source=frontend \
     --port=80 \
-    --set-build-env-vars VITE_API_URL="https://fraudlens-backend-xxxxxx-el.a.run.app/api" \
+    --set-env-vars BACKEND_URL="https://fraudlens-backend-xxxxxx-el.a.run.app" \
     --allow-unauthenticated \
     --region=asia-south1
 ```
-*Note: Replace VITE_API_URL with your actual backend Cloud Run URL (append `/api` at the end).*
+*Note: Replace BACKEND_URL with your actual backend Cloud Run URL (do NOT append `/api` at the end).*
 
 Once finished, the command will output your frontend URL:
 `https://fraudlens-frontend-xxxxxx-el.a.run.app`
+
 
 ---
 

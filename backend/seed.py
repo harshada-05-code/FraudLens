@@ -37,10 +37,20 @@ def generate_invalid_gstin():
 def seed_data():
     db = SessionLocal()
     try:
-        # Recreate tables
-        Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
-        print("Database tables recreated.")
+        seed_data_in_db(db, recreate_tables=True)
+    except Exception as e:
+        print(f"Error seeding database: {e}")
+        raise e
+    finally:
+        db.close()
+
+def seed_data_in_db(db: Session, recreate_tables: bool = True):
+    try:
+        if recreate_tables:
+            # Recreate tables
+            Base.metadata.drop_all(bind=engine)
+            Base.metadata.create_all(bind=engine)
+            print("Database tables recreated.")
 
         # 1. Seed Policy Rules
         for cat, limits in CATEGORIES.items():
@@ -315,8 +325,6 @@ def seed_data():
         db.rollback()
         print(f"Error seeding database: {e}")
         raise e
-    finally:
-        db.close()
 
 if __name__ == "__main__":
     seed_data()

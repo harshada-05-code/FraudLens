@@ -4,11 +4,11 @@ FROM node:18-alpine AS build
 WORKDIR /app
 
 # Copy dependency configs
-COPY frontend/package*.json ./
+COPY package*.json ./
 RUN npm install
 
 # Copy source code files
-COPY frontend/ ./
+COPY . ./
 
 # Pass VITE_API_URL argument to use during static build
 ARG VITE_API_URL
@@ -23,7 +23,7 @@ FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 
 # Copy custom Nginx configuration for React SPA routing
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 
 # Expose port 80 (Google Cloud Run default can also map to this port)
 EXPOSE 80
