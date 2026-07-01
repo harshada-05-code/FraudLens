@@ -161,42 +161,42 @@ async def upload_transaction(
 
     # Verify Employee exists
     employee = db.query(Employee).filter(Employee.id == employee_id).first()
-if not employee:
-    # Fallback: automatically use the first employee in the database if ID is missing or invalid
-    employee = db.query(Employee).order_by(Employee.id).first()
     if not employee:
-        # If the database is completely empty of ANY employees, auto-create a default admin
-        from backend.models import Employee as EmpModel
-        employee = EmpModel(name='Finance Admin', email='admin@company.in', department='Finance')
-        db.add(employee)
+        # Fallback: automatically use the first employee in the database if ID is missing or invalid
+        employee = db.query(Employee).order_by(Employee.id).first()
+        if not employee:
+            # If the database is completely empty of ANY employees, auto-create a default admin
+            from backend.models import Employee as EmpModel
+            employee = EmpModel(name='Finance Admin', email='admin@company.in', department='Finance')
+            db.add(employee)
+            db.commit()
+            db.refresh(employee)
+            
+        # Create Transaction in Pending state
+        tx = Transaction(
+            date=tx_date,
+            amount=amount,
+            category=category,
+            employee_id=employee.id,
+            vendor_id=vendor.id,
+            status="Pending",
+            verdict=None,
+            reasoning_trail=None,
+            receipt_url=f"/receipts/{file.filename}" if file else "/receipts/manual_upload.png"
+        )
+        db.add(tx)
         db.commit()
-        db.refresh(employee)
-        
-    # Create Transaction in Pending state
-    tx = Transaction(
-        date=tx_date,
-        amount=amount,
-        category=category,
-        employee_id=employee.id,
-        vendor_id=vendor.id,
-        status="Pending",
-        verdict=None,
-        reasoning_trail=None,
-        receipt_url=f"/receipts/{file.filename}" if file else "/receipts/manual_upload.png"
-    )
-    db.add(tx)
-    db.commit()
-    db.refresh(tx)
+        db.refresh(tx)
 
-    # Run agent audit pipeline
-    audit_res = await audit_transaction(tx.id)
+        # Run agent audit pipeline
+        audit_res = await audit_transaction(tx.id)
 
-    return {
-        "message": "Transaction uploaded and audited successfully.",
-        "transaction_id": tx.id,
-        "verdict": audit_res.get("verdict"),
-        "reasoning": audit_res.get("reasoning")
-    }
+        return {
+            "message": "Transaction uploaded and audited successfully.",
+            "transaction_id": tx.id,
+            "verdict": audit_res.get("verdict"),
+            "reasoning": audit_res.get("reasoning")
+        }
 
 @app.post("/api/intake/whatsapp")
 async def whatsapp_intake(
