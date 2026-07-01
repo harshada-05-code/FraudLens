@@ -17,6 +17,16 @@ app = FastAPI(title="FraudLens API")
 # Automatically initialize database tables on startup
 init_db()
 
+# Auto-seed if database is empty
+db = SessionLocal()
+try:
+    if db.query(PolicyRule).count() == 0 and db.query(Employee).count() == 0:
+        print("Database is empty. Running auto-seed...")
+        from seed import seed_data_in_db
+        seed_data_in_db(db, recreate_tables=False)
+finally:
+    db.close()
+
 # Ensure static/receipts directory exists relative to this file
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(CURRENT_DIR, "static", "receipts")
@@ -151,9 +161,17 @@ async def upload_transaction(
 
     # Verify Employee exists
     employee = db.query(Employee).filter(Employee.id == employee_id).first()
+if not employee:
+    # Fallback: automatically use the first employee in the database if ID is missing or invalid
+    employee = db.query(Employee).order_by(Employee.id).first()
     if not employee:
-        raise HTTPException(status_code=400, detail="Employee not found")
-
+        # If the database is completely empty of ANY employees, auto-create a default admin
+        from backend.models import Employee as EmpModel
+        employee = EmpModel(name='Finance Admin', email='admin@company.in', department='Finance')
+        db.add(employee)
+        db.commit()
+        db.refresh(employee)
+        
     # Create Transaction in Pending state
     tx = Transaction(
         date=tx_date,
@@ -536,3 +554,8 @@ def update_transaction_verdict(
         raise HTTPException(status_code=400, detail=res.get("message"))
         
     return res
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
